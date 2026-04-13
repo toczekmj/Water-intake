@@ -1,0 +1,159 @@
+.app {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.card {
+  background: white;
+  border-radius: 14px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.muted {
+  color: #64748b;
+}
+
+.progressWrap {
+  background: #e2e8f0;
+  border-radius: 999px;
+  height: 12px;
+  margin: 0.5rem 0 1rem;
+  overflow: hidden;
+}
+
+.progressFill {
+  background: linear-gradient(90deg, #38bdf8, #2563eb);
+  height: 100%;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 1px solid #cbd5e1;
+  background: white;
+  color: #0f172a;
+  padding: 0.5rem 0.75rem;
+  border-radius: 10px;
+}
+
+button.primary {
+  background: #0ea5e9;
+  color: white;
+  border-color: #0ea5e9;
+}
+
+button.active {
+  background: #0f172a;
+  color: white;
+  border-color: #0f172a;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 0.45rem 0.6rem;
+}
+
+.list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.listItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid #e2e8f0;
+  padding: 0.6rem;
+  border-radius: 10px;
+}
+
+.pill {
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  background: #f1f5f9;
+}
+
+.dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+@media (max-width: 640px) {
+  .app {
+    padding: 0.75rem;
+  }
+}
+
+.toastContainer {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  display: grid;
+  gap: 0.5rem;
+  z-index: 9999;
+  max-width: min(92vw, 360px);
+}
+
+.toast {
+  border-radius: 12px;
+  padding: 0.65rem 0.85rem;
+  color: #0f172a;
+  background: #e2e8f0;
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.18);
+}
+
+.toast-error {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.toast-success {
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.toast-info {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+}

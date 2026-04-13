@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hydrateme}
+      POSTGRES_USER: ${POSTGRES_USER:-hydrateme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hydrateme}
+    volumes:
+      - hydrateme_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hydrateme} -d ${POSTGRES_DB:-hydrateme}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hydrateme}:${POSTGRES_PASSWORD:-hydrateme}@db:5432/${POSTGRES_DB:-hydrateme}
+      APP_TOKEN: ${APP_TOKEN:-hydrateme-dev-token}
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: /api
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  hydrateme_db:
