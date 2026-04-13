@@ -37,7 +37,15 @@ services:
     depends_on:
       - api
     ports:
-      - "${WEB_PORT:-8080}:80"
+      - "${WEB_BIND_IP:-127.0.0.1}:${WEB_PORT:-8080}:80"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - web
+    profiles: ["cloudflare"]
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN:-}
 
 volumes:
   hydrateme_db:

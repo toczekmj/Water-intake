@@ -61,7 +61,7 @@ cp .env.example .env
 
 Edit `.env` with strong `POSTGRES_PASSWORD` and `APP_TOKEN`.
 
-### 2) Build and run
+### 2) Build and run (LAN/direct access)
 
 ```bash
 docker compose up -d --build
@@ -71,6 +71,47 @@ docker compose up -d --build
 
 - URL: `http://<your-server-ip>:8080` (or custom `WEB_PORT`)
 - API is routed internally via Nginx as `/api`
+
+Note: for secure defaults, `WEB_BIND_IP` is set to `127.0.0.1` in `.env.example`.
+If you want direct LAN access (without Cloudflare Tunnel), set:
+
+```env
+WEB_BIND_IP=0.0.0.0
+```
+
+### 4) Cloudflare Tunnel (recommended for internet exposure)
+
+1. Create a Cloudflare Tunnel and copy the tunnel token.
+2. Set `CF_TUNNEL_TOKEN` in `.env`.
+3. Keep `WEB_BIND_IP=127.0.0.1` so the app is not directly exposed on LAN.
+4. Start with Cloudflare profile enabled:
+
+```bash
+docker compose --profile cloudflare up -d --build
+```
+
+Then access via your Cloudflare hostname (HTTPS), and protect it with Cloudflare Access policies (recommended).
+
+### 5) Cloudflare Access policy (Google login, single-user lock)
+
+To ensure only you can open the app, put your tunnel hostname behind Cloudflare Access.
+
+1. In Cloudflare Zero Trust, go to **Settings -> Authentication -> Login methods**.
+2. Add **Google** as an identity provider.
+3. Configure your Google OAuth app (or use Cloudflare's guided setup) and save.
+4. Go to **Access -> Applications -> Add an application**.
+5. Choose **Self-hosted** and set:
+   - **Application domain**: your tunnel hostname (for example `drink.example.com`)
+   - **Session duration**: your preference (for example `24h` or `7d`)
+6. Add an **Allow** policy:
+   - **Include**: `Emails` -> `your-google-address@gmail.com`
+7. (Recommended) Add a stricter rule:
+   - Require **MFA** in Access policy controls.
+8. Save and deploy.
+
+Result: users must sign in with Google, and only the allowed email can reach HydrateMe.
+
+Tip: keep `WEB_BIND_IP=127.0.0.1` so the app is only reachable through Tunnel/Access, not directly from LAN.
 
 ## iPhone Install
 
