@@ -1,4 +1,4 @@
-import type { BreakdownRow, CupPreset, Fluid, IntakeEntry, StatsResponse } from "./types";
+import type { BreakdownRow, CupPreset, Fluid, IntakeEntry, Settings, StatsResponse } from "./types";
 
 const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:4000/api";
 const token = import.meta.env.VITE_APP_TOKEN ?? "hydrateme-dev-token";
@@ -40,16 +40,48 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getConfig: () =>
-    request<{ userId: string; settings: { daily_goal_ml: number }; fluids: Fluid[]; cups: CupPreset[] }>("/config"),
-  saveSettings: (dailyGoalMl: number) =>
+    request<{ userId: string; settings: Settings; fluids: Fluid[]; cups: CupPreset[] }>("/config"),
+  saveSettings: (payload: {
+    dailyGoalMl: number;
+    hydrationMode: Settings["hydration_mode"];
+    caffeineHabituation: Settings["caffeine_habituation"];
+    useHydrationFactors: boolean;
+    electrolyteTargetsEnabled: boolean;
+  }) =>
     request<{ ok: boolean }>("/settings", {
       method: "PUT",
-      body: JSON.stringify({ dailyGoalMl })
+      body: JSON.stringify(payload)
     }),
-  addFluid: (name: string, color: string) =>
+  addFluid: (payload: {
+    name: string;
+    color: string;
+    defaultHydrationFactor: number;
+    caffeineMgPer100ml: number | null;
+    sodiumMgPer100ml: number;
+    potassiumMgPer100ml: number;
+    magnesiumMgPer100ml: number;
+    isUserEditableFactor: boolean;
+  }) =>
     request<Fluid>("/fluids", {
       method: "POST",
-      body: JSON.stringify({ name, color })
+      body: JSON.stringify(payload)
+    }),
+  updateFluid: (
+    id: number,
+    payload: {
+      name: string;
+      color: string;
+      defaultHydrationFactor: number;
+      caffeineMgPer100ml: number | null;
+      sodiumMgPer100ml: number;
+      potassiumMgPer100ml: number;
+      magnesiumMgPer100ml: number;
+      isUserEditableFactor: boolean;
+    }
+  ) =>
+    request<{ ok: boolean }>(`/fluids/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
     }),
   deleteFluid: (id: number) => request<{ ok: boolean }>(`/fluids/${id}`, { method: "DELETE" }),
   addCup: (name: string, volumeMl: number) =>

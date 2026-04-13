@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiRequestError, api, eventsUrl } from "./api";
 import { clearQueue, enqueueIntake, flushQueue, getQueueSize } from "./offlineQueue";
-import type { BreakdownRow, CupPreset, Fluid, IntakeEntry, StatsResponse } from "./types";
+import type { BreakdownRow, CupPreset, Fluid, IntakeEntry, Settings, StatsResponse } from "./types";
 import "./App.css";
 
 type Tab = "today" | "stats" | "settings";
@@ -9,6 +9,14 @@ type ToastKind = "error" | "success" | "info";
 type Toast = { id: number; message: string; kind: ToastKind };
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+const defaultSettings: Settings = {
+  daily_goal_ml: 2000,
+  hydration_mode: "standard",
+  caffeine_habituation: "regular",
+  use_hydration_factors: true,
+  electrolyte_targets_enabled: false
+};
+
 const createClientId = () => {
   const maybeCrypto = globalThis.crypto;
   if (maybeCrypto?.randomUUID) {
@@ -26,7 +34,7 @@ const createClientId = () => {
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("today");
-  const [dailyGoalMl, setDailyGoalMl] = useState(2000);
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [fluids, setFluids] = useState<Fluid[]>([]);
   const [cups, setCups] = useState<CupPreset[]>([]);
   const [selectedFluidId, setSelectedFluidId] = useState<number | null>(null);
@@ -35,20 +43,28 @@ function App() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [status, setStatus] = useState("Loading...");
   const [queueSize, setQueueSize] = useState(0);
-  const [newFluidName, setNewFluidName] = useState("");
-  const [newFluidColor, setNewFluidColor] = useState("#22c55e");
+  const [newFluid, setNewFluid] = useState({
+    name: "",
+    color: "#22c55e",
+    default_hydration_factor: 1,
+    caffeine_mg_per_100ml: "",
+    sodium_mg_per_100ml: 0,
+    potassium_mg_per_100ml: 0,
+    magnesium_mg_per_100ml: 0
+  });
   const [newCupName, setNewCupName] = useState("");
   const [newCupVolume, setNewCupVolume] = useState(250);
   const [refreshingStats, setRefreshingStats] = useState(false);
   const [sseConnected, setSseConnected] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const totalTodayMl = useMemo(
-    () => entries.reduce((acc, entry) => acc + entry.volume_ml, 0),
-    [entries]
-  );
-
-  const progressPercent = Math.min(100, Math.round((totalTodayMl / dailyGoalMl) * 100));
+  const totalTodayMl = useMemo(() => entries.reduce((acc, entry) => acc + entry.volume_ml, 0), [entries]);
+  const creditedTodayMl = useMemo(() => entries.reduce((acc, entry) => acc + entry.credited_hydration_ml, 0), [entries]);
+  const caffeineTodayMg = stats?.today.caffeine_mg ?? entries.reduce((acc, entry) => acc + entry.caffeine_mg, 0);
+  const sodiumTodayMg = stats?.today.sodium_mg ?? entries.reduce((acc, entry) => acc + entry.sodium_mg, 0);
+  const potassiumTodayMg = stats?.today.potassium_mg ?? entries.reduce((acc, entry) => acc + entry.potassium_mg, 0);
+  const magnesiumTodayMg = stats?.today.magnesium_mg ?? entries.reduce((acc, entry) => acc + entry.magnesium_mg, 0);
+  const progressPercent = Math.min(100, Math.round((creditedTodayMl / settings.daily_goal_ml) * 100));
 
   function getErrorMessage(error: unknown, fallback: string) {
     if (error instanceof ApiRequestError) {
@@ -73,9 +89,16 @@ function App() {
     }, 3800);
   }
 
-  async function refreshQueueStatus() {
-    setQueueSize(await getQueueSize());
+  function progressToTarget(value: number, target: number) {
+    if (target <= 0) {
+      return 0;
+    }
+    return Math.min(100, Math.round((value / target) * 100));
   }
+
+  const refreshQueueStatus = useCallback(async () => {
+    setQueueSize(await getQueueSize());
+  }, []);
 
   async function loadConfigAndToday() {
     const config = await api.getConfig();
@@ -92,7 +115,7 @@ function App() {
       api.getBreakdown(todayIso()),
       api.getStats(30)
     ]);
-    setDailyGoalMl(config.settings.daily_goal_ml);
+    setSettings(config.settings);
     setFluids(config.fluids);
     setCups(config.cups);
     setSelectedFluidId((old) => {
@@ -104,10 +127,7 @@ function App() {
     setEntries(dayEntries);
     setBreakdown(dayBreakdown);
     setStats(statsData);
-    localStorage.setItem(
-      "hydrateme-cache",
-      JSON.stringify({ config, dayEntries, dayBreakdown, statsData })
-    );
+    localStorage.setItem("hydrateme-cache", JSON.stringify({ config, dayEntries, dayBreakdown, statsData }));
   }
 
   useEffect(() => {
@@ -122,12 +142,12 @@ function App() {
         const cache = localStorage.getItem("hydrateme-cache");
         if (cache) {
           const parsed = JSON.parse(cache) as {
-            config: { userId: string; settings: { daily_goal_ml: number }; fluids: Fluid[]; cups: CupPreset[] };
+            config: { userId: string; settings: Settings; fluids: Fluid[]; cups: CupPreset[] };
             dayEntries: IntakeEntry[];
             dayBreakdown: BreakdownRow[];
             statsData: StatsResponse;
           };
-          setDailyGoalMl(parsed.config.settings.daily_goal_ml);
+          setSettings(parsed.config.settings);
           setFluids(parsed.config.fluids);
           setCups(parsed.config.cups);
           setEntries(parsed.dayEntries);
@@ -140,8 +160,8 @@ function App() {
         }
       }
     };
-    bootstrap();
-  }, []);
+    void bootstrap();
+  }, [refreshQueueStatus]);
 
   useEffect(() => {
     const onlineHandler = async () => {
@@ -156,9 +176,9 @@ function App() {
     };
     window.addEventListener("online", onlineHandler);
     return () => window.removeEventListener("online", onlineHandler);
-  }, []);
+  }, [refreshQueueStatus]);
 
-  async function refreshTodayPanels() {
+  const refreshTodayPanels = useCallback(async () => {
     const [dayEntries, dayBreakdown, statsData] = await Promise.all([
       api.listIntakes(todayIso()),
       api.getBreakdown(todayIso()),
@@ -167,9 +187,9 @@ function App() {
     setEntries(dayEntries);
     setBreakdown(dayBreakdown);
     setStats(statsData);
-  }
+  }, []);
 
-  async function refreshLiveData() {
+  const refreshLiveData = useCallback(async () => {
     if (!navigator.onLine) {
       return;
     }
@@ -181,7 +201,7 @@ function App() {
     } catch {
       setStatus("Sync check failed");
     }
-  }
+  }, [refreshQueueStatus, refreshTodayPanels]);
 
   async function addIntake(volumeMl: number) {
     if (!selectedFluidId) {
@@ -244,23 +264,68 @@ function App() {
 
   async function saveGoal() {
     try {
-      await api.saveSettings(dailyGoalMl);
-      setStatus("Goal updated");
-      pushToast("Daily goal updated.", "success");
+      await api.saveSettings({
+        dailyGoalMl: settings.daily_goal_ml,
+        hydrationMode: settings.hydration_mode,
+        caffeineHabituation: settings.caffeine_habituation,
+        useHydrationFactors: settings.use_hydration_factors,
+        electrolyteTargetsEnabled: settings.electrolyte_targets_enabled
+      });
+      setStatus("Settings updated");
+      pushToast("Settings updated.", "success");
+      await refreshTodayPanels();
     } catch (error) {
-      pushToast(getErrorMessage(error, "Could not update goal"));
+      pushToast(getErrorMessage(error, "Could not update settings"));
     }
   }
 
   async function createFluid() {
-    if (!newFluidName.trim()) return;
+    if (!newFluid.name.trim()) {
+      return;
+    }
     try {
-      const fluid = await api.addFluid(newFluidName.trim(), newFluidColor);
+      const fluid = await api.addFluid({
+        name: newFluid.name.trim(),
+        color: newFluid.color,
+        defaultHydrationFactor: Number(newFluid.default_hydration_factor),
+        caffeineMgPer100ml: newFluid.caffeine_mg_per_100ml === "" ? null : Number(newFluid.caffeine_mg_per_100ml),
+        sodiumMgPer100ml: Number(newFluid.sodium_mg_per_100ml),
+        potassiumMgPer100ml: Number(newFluid.potassium_mg_per_100ml),
+        magnesiumMgPer100ml: Number(newFluid.magnesium_mg_per_100ml),
+        isUserEditableFactor: true
+      });
       setFluids((old) => [...old, fluid]);
-      setNewFluidName("");
+      setNewFluid({
+        name: "",
+        color: "#22c55e",
+        default_hydration_factor: 1,
+        caffeine_mg_per_100ml: "",
+        sodium_mg_per_100ml: 0,
+        potassium_mg_per_100ml: 0,
+        magnesium_mg_per_100ml: 0
+      });
       pushToast("Fluid added.", "success");
     } catch (error) {
       pushToast(getErrorMessage(error, "Could not add fluid"));
+    }
+  }
+
+  async function saveFluid(fluid: Fluid) {
+    try {
+      await api.updateFluid(fluid.id, {
+        name: fluid.name,
+        color: fluid.color,
+        defaultHydrationFactor: fluid.default_hydration_factor,
+        caffeineMgPer100ml: fluid.caffeine_mg_per_100ml,
+        sodiumMgPer100ml: fluid.sodium_mg_per_100ml,
+        potassiumMgPer100ml: fluid.potassium_mg_per_100ml,
+        magnesiumMgPer100ml: fluid.magnesium_mg_per_100ml,
+        isUserEditableFactor: fluid.is_user_editable_factor
+      });
+      pushToast("Fluid updated.", "success");
+      await refreshTodayPanels();
+    } catch (error) {
+      pushToast(getErrorMessage(error, "Could not update fluid"));
     }
   }
 
@@ -339,13 +404,10 @@ function App() {
       stream.close();
       setSseConnected(false);
     };
-  }, []);
+  }, [refreshLiveData]);
 
   useEffect(() => {
-    if (activeTab === "settings") {
-      return;
-    }
-    if (sseConnected) {
+    if (activeTab === "settings" || sseConnected) {
       return;
     }
 
@@ -364,7 +426,7 @@ function App() {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", onFocus);
     };
-  }, [activeTab, sseConnected]);
+  }, [activeTab, sseConnected, refreshLiveData]);
 
   return (
     <main className="app">
@@ -404,10 +466,12 @@ function App() {
                   </option>
                 ))}
               </select>
+              <span className="pill">Caffeine: {caffeineTodayMg} mg</span>
             </div>
 
+            <h3>Total fluid: {totalTodayMl}ml</h3>
             <h3>
-              {totalTodayMl}ml / {dailyGoalMl}ml
+              Hydration credited: {creditedTodayMl}ml / {settings.daily_goal_ml}ml
             </h3>
             <div className="progressWrap">
               <div className="progressFill" style={{ width: `${progressPercent}%` }} />
@@ -427,6 +491,54 @@ function App() {
             </div>
           </section>
 
+          {settings.hydration_mode === "keto" && (
+            <section className="card">
+              <h3>Keto electrolytes</h3>
+              <div className="list">
+                <div className="listItem">
+                  <span>Sodium</span>
+                  <strong>
+                    {sodiumTodayMg}mg / {stats?.today.electrolyte_targets.sodium_mg.min ?? 3000}mg
+                  </strong>
+                </div>
+                <div className="progressWrap">
+                  <div
+                    className="progressFill"
+                    style={{ width: `${progressToTarget(sodiumTodayMg, stats?.today.electrolyte_targets.sodium_mg.min ?? 3000)}%` }}
+                  />
+                </div>
+                <div className="listItem">
+                  <span>Potassium</span>
+                  <strong>
+                    {potassiumTodayMg}mg / {stats?.today.electrolyte_targets.potassium_mg.min ?? 3000}mg
+                  </strong>
+                </div>
+                <div className="progressWrap">
+                  <div
+                    className="progressFill"
+                    style={{
+                      width: `${progressToTarget(potassiumTodayMg, stats?.today.electrolyte_targets.potassium_mg.min ?? 3000)}%`
+                    }}
+                  />
+                </div>
+                <div className="listItem">
+                  <span>Magnesium</span>
+                  <strong>
+                    {magnesiumTodayMg}mg / {stats?.today.electrolyte_targets.magnesium_mg.min ?? 300}mg
+                  </strong>
+                </div>
+                <div className="progressWrap">
+                  <div
+                    className="progressFill"
+                    style={{
+                      width: `${progressToTarget(magnesiumTodayMg, stats?.today.electrolyte_targets.magnesium_mg.min ?? 300)}%`
+                    }}
+                  />
+                </div>
+              </div>
+            </section>
+          )}
+
           <section className="card">
             <h3>Daily breakdown</h3>
             <div className="list">
@@ -436,7 +548,9 @@ function App() {
                     <span className="dot" style={{ background: row.fluid_color, marginRight: 8 }} />
                     {row.fluid_name}
                   </span>
-                  <strong>{row.total_ml}ml</strong>
+                  <strong>
+                    {row.total_ml}ml ({row.credited_total_ml}ml credited)
+                  </strong>
                 </div>
               ))}
             </div>
@@ -448,7 +562,7 @@ function App() {
               {entries.map((entry) => (
                 <div className="listItem" key={entry.id}>
                   <span>
-                    {entry.fluid_name} - {entry.volume_ml}ml
+                    {entry.fluid_name} - {entry.volume_ml}ml ({entry.credited_hydration_ml}ml credited)
                   </span>
                   <button onClick={() => deleteEntry(entry.id)}>Delete</button>
                 </div>
@@ -470,7 +584,9 @@ function App() {
             {stats?.daily.map((d) => (
               <div key={d.day} className="listItem">
                 <span>{d.day}</span>
-                <strong>{d.total_ml}ml</strong>
+                <strong>
+                  {d.total_ml}ml ({d.credited_hydration_ml} credited)
+                </strong>
               </div>
             ))}
           </div>
@@ -479,7 +595,9 @@ function App() {
             {stats?.composition.map((d) => (
               <div key={d.fluid_name} className="listItem">
                 <span>{d.fluid_name}</span>
-                <strong>{d.total_ml}ml</strong>
+                <strong>
+                  {d.total_ml}ml ({d.credited_hydration_ml} credited)
+                </strong>
               </div>
             ))}
           </div>
@@ -489,17 +607,76 @@ function App() {
       {activeTab === "settings" && (
         <>
           <section className="card">
-            <h3>Daily goal</h3>
+            <h3>Hydration settings</h3>
             <div className="row">
               <input
                 type="number"
-                value={dailyGoalMl}
-                onChange={(event) => setDailyGoalMl(Number(event.target.value))}
+                value={settings.daily_goal_ml}
+                onChange={(event) =>
+                  setSettings((old) => ({ ...old, daily_goal_ml: Number(event.target.value) }))
+                }
               />
-              <button className="primary" onClick={saveGoal}>
-                Save
-              </button>
+              <label className="muted">Daily goal (ml)</label>
             </div>
+            <div className="row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={settings.use_hydration_factors}
+                  onChange={(event) =>
+                    setSettings((old) => ({ ...old, use_hydration_factors: event.target.checked }))
+                  }
+                />
+                {" "}Use drink hydration factors
+              </label>
+            </div>
+            <div className="row">
+              <select
+                value={settings.caffeine_habituation}
+                onChange={(event) =>
+                  setSettings((old) => ({
+                    ...old,
+                    caffeine_habituation: event.target.value as Settings["caffeine_habituation"]
+                  }))
+                }
+              >
+                <option value="regular">Regular caffeine user</option>
+                <option value="occasional">Occasional caffeine user</option>
+                <option value="rare">Rare caffeine user</option>
+              </select>
+              <label className="muted">Caffeine profile</label>
+            </div>
+            <div className="row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={settings.hydration_mode === "keto"}
+                  onChange={(event) =>
+                    setSettings((old) => ({
+                      ...old,
+                      hydration_mode: event.target.checked ? "keto" : "standard",
+                      electrolyte_targets_enabled: event.target.checked ? true : old.electrolyte_targets_enabled
+                    }))
+                  }
+                />
+                {" "}Keto mode
+              </label>
+            </div>
+            <div className="row">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={settings.electrolyte_targets_enabled}
+                  onChange={(event) =>
+                    setSettings((old) => ({ ...old, electrolyte_targets_enabled: event.target.checked }))
+                  }
+                />
+                {" "}Electrolyte targets
+              </label>
+            </div>
+            <button className="primary" onClick={saveGoal}>
+              Save settings
+            </button>
           </section>
 
           <section className="card">
@@ -507,13 +684,64 @@ function App() {
             <div className="row">
               <input
                 placeholder="Fluid name"
-                value={newFluidName}
-                onChange={(event) => setNewFluidName(event.target.value)}
+                value={newFluid.name}
+                onChange={(event) => setNewFluid((old) => ({ ...old, name: event.target.value }))}
               />
               <input
                 type="color"
-                value={newFluidColor}
-                onChange={(event) => setNewFluidColor(event.target.value)}
+                value={newFluid.color}
+                onChange={(event) => setNewFluid((old) => ({ ...old, color: event.target.value }))}
+              />
+            </div>
+            <div className="row">
+              <input
+                type="number"
+                step="0.05"
+                min="0"
+                max="1.2"
+                value={newFluid.default_hydration_factor}
+                onChange={(event) =>
+                  setNewFluid((old) => ({ ...old, default_hydration_factor: Number(event.target.value) }))
+                }
+                placeholder="Factor"
+              />
+              <input
+                type="number"
+                min="0"
+                value={newFluid.caffeine_mg_per_100ml}
+                onChange={(event) =>
+                  setNewFluid((old) => ({ ...old, caffeine_mg_per_100ml: event.target.value }))
+                }
+                placeholder="Caffeine mg/100ml"
+              />
+            </div>
+            <div className="row">
+              <input
+                type="number"
+                min="0"
+                value={newFluid.sodium_mg_per_100ml}
+                onChange={(event) =>
+                  setNewFluid((old) => ({ ...old, sodium_mg_per_100ml: Number(event.target.value) }))
+                }
+                placeholder="Sodium mg/100ml"
+              />
+              <input
+                type="number"
+                min="0"
+                value={newFluid.potassium_mg_per_100ml}
+                onChange={(event) =>
+                  setNewFluid((old) => ({ ...old, potassium_mg_per_100ml: Number(event.target.value) }))
+                }
+                placeholder="Potassium mg/100ml"
+              />
+              <input
+                type="number"
+                min="0"
+                value={newFluid.magnesium_mg_per_100ml}
+                onChange={(event) =>
+                  setNewFluid((old) => ({ ...old, magnesium_mg_per_100ml: Number(event.target.value) }))
+                }
+                placeholder="Magnesium mg/100ml"
               />
               <button className="primary" onClick={createFluid}>
                 Add fluid
@@ -521,12 +749,96 @@ function App() {
             </div>
             <div className="list">
               {fluids.map((fluid) => (
-                <div className="listItem" key={fluid.id}>
-                  <span>
-                    <span className="dot" style={{ background: fluid.color, marginRight: 8 }} />
-                    {fluid.name}
-                  </span>
-                  <button onClick={() => removeFluid(fluid.id)}>Delete</button>
+                <div className="listItem" key={fluid.id} style={{ display: "block" }}>
+                  <div className="row">
+                    <input
+                      value={fluid.name}
+                      onChange={(event) =>
+                        setFluids((old) =>
+                          old.map((item) => (item.id === fluid.id ? { ...item, name: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <input
+                      type="color"
+                      value={fluid.color}
+                      onChange={(event) =>
+                        setFluids((old) =>
+                          old.map((item) => (item.id === fluid.id ? { ...item, color: event.target.value } : item))
+                        )
+                      }
+                    />
+                    <button onClick={() => removeFluid(fluid.id)}>Delete</button>
+                  </div>
+                  <div className="row">
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      max="1.2"
+                      value={fluid.default_hydration_factor}
+                      onChange={(event) =>
+                        setFluids((old) =>
+                          old.map((item) =>
+                            item.id === fluid.id ? { ...item, default_hydration_factor: Number(event.target.value) } : item
+                          )
+                        )
+                      }
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      value={fluid.caffeine_mg_per_100ml ?? ""}
+                      onChange={(event) =>
+                        setFluids((old) =>
+                          old.map((item) =>
+                            item.id === fluid.id
+                              ? { ...item, caffeine_mg_per_100ml: event.target.value === "" ? null : Number(event.target.value) }
+                              : item
+                          )
+                        )
+                      }
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      value={fluid.sodium_mg_per_100ml}
+                      onChange={(event) =>
+                        setFluids((old) =>
+                          old.map((item) =>
+                            item.id === fluid.id ? { ...item, sodium_mg_per_100ml: Number(event.target.value) } : item
+                          )
+                        )
+                      }
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      value={fluid.potassium_mg_per_100ml}
+                      onChange={(event) =>
+                        setFluids((old) =>
+                          old.map((item) =>
+                            item.id === fluid.id ? { ...item, potassium_mg_per_100ml: Number(event.target.value) } : item
+                          )
+                        )
+                      }
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      value={fluid.magnesium_mg_per_100ml}
+                      onChange={(event) =>
+                        setFluids((old) =>
+                          old.map((item) =>
+                            item.id === fluid.id ? { ...item, magnesium_mg_per_100ml: Number(event.target.value) } : item
+                          )
+                        )
+                      }
+                    />
+                    <button className="primary" onClick={() => saveFluid(fluid)}>
+                      Save
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
