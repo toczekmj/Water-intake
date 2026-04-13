@@ -2,10 +2,13 @@
 
 HydrateMe is a mobile-first PWA for tracking daily fluid intake (water, coffee, tea, custom fluids) with:
 
-- daily breakdown by fluid
+- hydration scoring (hydration factors per fluid + caffeine penalty profile)
+- optional keto electrolyte tracking (sodium, potassium, magnesium)
 - configurable cup sizes (for example 250ml, 300ml)
 - offline intake logging and background sync
-- stats panel (daily totals + fluid composition)
+- interactive stats (history chart + 7/30/90/180 day ranges + fluid composition)
+- first-run guided app tour + manual retake from Settings
+- light/dark/system appearance modes with persistence
 - Docker deployment for Proxmox/self-hosted environments
 
 ## Stack
@@ -81,8 +84,8 @@ Note: iPhone PWA install requires HTTPS in production (or local/dev exceptions).
 
 - `fluids`: fluid types per user
 - `cup_presets`: custom cup volumes
-- `intake_entries`: logged events with fluid, ml, timestamp
-- `settings`: daily hydration goal
+- `intake_entries`: logged events with fluid, ml, hydration credit, caffeine/electrolyte values, timestamp
+- `settings`: daily goal, hydration mode, caffeine habituation, electrolyte options
 
 ## API Auth
 
