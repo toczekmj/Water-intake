@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api, eventsUrl } from "./api";
 import { clearQueue, enqueueIntake, flushQueue, getQueueSize } from "./offlineQueue";
 import type { BreakdownRow, CupPreset, Fluid, IntakeEntry, Settings, StatsResponse } from "./types";
@@ -9,6 +9,9 @@ type ToastKind = "error" | "success" | "info";
 type Toast = { id: number; message: string; kind: ToastKind };
 type StatsWindowDays = 7 | 30 | 90 | 180;
 type TourStep = { title: string; description: string; tab: Tab; selector: string };
+type ThemeMode = "system" | "light" | "dark";
+const tabOrder: Record<Tab, number> = { today: 0, stats: 1, settings: 2 };
+const THEME_MODE_STORAGE_KEY = "hydrateme-theme-mode";
 
 const TOUR_STORAGE_KEY = "hydrateme-tour-completed";
 const tourSteps: TourStep[] = [
@@ -126,6 +129,12 @@ function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isTourOpen, setIsTourOpen] = useState(false);
   const [tourStepIndex, setTourStepIndex] = useState(0);
+  const [tabAnimationClass, setTabAnimationClass] = useState("tabScene-forward");
+  const [tabAnimationKey, setTabAnimationKey] = useState(0);
+  const [navIsFlowing, setNavIsFlowing] = useState(false);
+  const [navLiquidStyle, setNavLiquidStyle] = useState<{ left: number; width: number } | null>(null);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [tourTargetRect, setTourTargetRect] = useState<{
     top: number;
     left: number;
@@ -134,6 +143,20 @@ function App() {
   } | null>(null);
 
   const currentTourStep = tourSteps[tourStepIndex];
+  const previousTabRef = useRef<Tab>(activeTab);
+  const navRef = useRef<HTMLElement | null>(null);
+  const navTabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({
+    today: null,
+    stats: null,
+    settings: null
+  });
+  const resolvedTheme = themeMode === "system" ? (systemPrefersDark ? "dark" : "light") : themeMode;
+  const appearanceIndicator = themeMode === "system" ? "A" : themeMode === "light" ? "sun" : "moon";
+  const nextThemeMode = themeMode === "system" ? "light" : themeMode === "light" ? "dark" : "system";
+  const chartAxisColor = resolvedTheme === "dark" ? "rgba(148, 163, 184, 0.55)" : "#94a3b8";
+  const chartGridColor = resolvedTheme === "dark" ? "rgba(100, 116, 139, 0.34)" : "#e2e8f0";
+  const chartTotalColor = resolvedTheme === "dark" ? "#38bdf8" : "#0ea5e9";
+  const chartCreditedColor = resolvedTheme === "dark" ? "#a78bfa" : "#6366f1";
 
   const totalTodayMl = useMemo(() => entries.reduce((acc, entry) => acc + entry.volume_ml, 0), [entries]);
   const creditedTodayMl = useMemo(() => entries.reduce((acc, entry) => acc + entry.credited_hydration_ml, 0), [entries]);
@@ -207,6 +230,9 @@ function App() {
     () => dailyHistory.filter((day) => day.total_ml > 0).length,
     [dailyHistory]
   );
+  const cycleThemeMode = useCallback(() => {
+    setThemeMode((old) => (old === "system" ? "light" : old === "light" ? "dark" : "system"));
+  }, []);
 
   function getErrorMessage(error: unknown, fallback: string) {
     if (error instanceof ApiRequestError) {
@@ -640,6 +666,72 @@ function App() {
   }, [tourTargetRect]);
 
   useEffect(() => {
+    const storedThemeMode = localStorage.getItem(THEME_MODE_STORAGE_KEY);
+    if (storedThemeMode === "light" || storedThemeMode === "dark" || storedThemeMode === "system") {
+      setThemeMode(storedThemeMode);
+    }
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    setSystemPrefersDark(mediaQuery.matches);
+    const handleChange = (event: MediaQueryListEvent) => setSystemPrefersDark(event.matches);
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    document.documentElement.style.colorScheme = resolvedTheme;
+    document.body.style.background = resolvedTheme === "dark" ? "#020617" : "#f8fafc";
+  }, [resolvedTheme]);
+
+  useEffect(() => {
+    const previousTab = previousTabRef.current;
+    if (previousTab === activeTab) {
+      return;
+    }
+    const direction = tabOrder[activeTab] >= tabOrder[previousTab] ? "forward" : "back";
+    setTabAnimationClass(direction === "forward" ? "tabScene-forward" : "tabScene-back");
+    setTabAnimationKey((key) => key + 1);
+    setNavIsFlowing(true);
+    const timeoutId = window.setTimeout(() => setNavIsFlowing(false), 560);
+    previousTabRef.current = activeTab;
+    return () => window.clearTimeout(timeoutId);
+  }, [activeTab]);
+
+  const updateNavLiquidPosition = useCallback(
+    (tab: Tab) => {
+      const navElement = navRef.current;
+      const tabElement = navTabRefs.current[tab];
+      if (!navElement || !tabElement) {
+        return;
+      }
+      const navRect = navElement.getBoundingClientRect();
+      const tabRect = tabElement.getBoundingClientRect();
+      const horizontalOverflow = 6;
+      const targetWidth = tabRect.width + horizontalOverflow * 2;
+      const tabCenter = tabRect.left - navRect.left + tabRect.width / 2;
+      const targetLeft = tabCenter - targetWidth / 2;
+      setNavLiquidStyle({
+        left: targetLeft,
+        width: targetWidth
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    updateNavLiquidPosition(activeTab);
+  }, [activeTab, updateNavLiquidPosition]);
+
+  useEffect(() => {
+    const handleResize = () => updateNavLiquidPosition(activeTab);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [activeTab, updateNavLiquidPosition]);
+
+  useEffect(() => {
     if (!("EventSource" in window)) {
       return;
     }
@@ -686,19 +778,48 @@ function App() {
   }, [activeTab, sseConnected, refreshLiveData]);
 
   return (
-    <main className="app">
+    <main className="app" data-theme={resolvedTheme}>
       <section className="card">
         <div className="header">
           <div>
             <h1 className="title">HydrateMe</h1>
             <div className="muted">{status}</div>
           </div>
-          <span className="pill">Queued: {queueSize}</span>
+          <div className="headerControls">
+            <button
+              type="button"
+              className="appearanceIndicator"
+              title={`Appearance: ${themeMode}. Tap to switch to ${nextThemeMode}.`}
+              aria-label={`Appearance: ${themeMode}. Tap to switch to ${nextThemeMode}.`}
+              onClick={cycleThemeMode}
+            >
+              {appearanceIndicator === "A" && <span className="appearanceIndicatorGlyph">A</span>}
+              {appearanceIndicator === "sun" && (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" strokeWidth="1.9" />
+                  <path
+                    d="M12 2.2v2.6M12 19.2v2.6M2.2 12h2.6M19.2 12h2.6M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.9"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
+              {appearanceIndicator === "moon" && (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#ffffff" d="M14.5 2.9a9.6 9.6 0 1 0 6.6 15.9A9 9 0 1 1 14.5 2.9Z" />
+                </svg>
+              )}
+            </button>
+            <span className="pill">Queued: {queueSize}</span>
+          </div>
         </div>
       </section>
 
-      {activeTab === "today" && (
-        <>
+      <div key={`${activeTab}-${tabAnimationKey}`} className={`tabScene ${tabAnimationClass}`}>
+        {activeTab === "today" && (
+          <>
           <section className="card">
             <div className="row" data-tour="today-fluid-picker">
               <select
@@ -807,25 +928,25 @@ function App() {
             <div className="list">
               {entries.map((entry) => (
                 <div className="listItem" key={entry.id}>
-                  <span>
+                  <span className="entryRowText">
                     {entry.fluid_name} - {entry.volume_ml}ml ({entry.credited_hydration_ml}ml credited)
                   </span>
-                  <button onClick={() => deleteEntry(entry.id)}>Delete</button>
+                  <button className="danger" onClick={() => deleteEntry(entry.id)}>Delete</button>
                 </div>
               ))}
             </div>
           </section>
-        </>
-      )}
+          </>
+        )}
 
-      {activeTab === "stats" && (
-        <section className="card">
+        {activeTab === "stats" && (
+          <section className="card">
           <div className="statsToolbar">
             <div className="statsRangePills" data-tour="stats-range">
               {([7, 30, 90, 180] as const).map((days) => (
                 <button
                   key={days}
-                  className={statsWindowDays === days ? "active" : ""}
+                  className={`statsFilterButton ${statsWindowDays === days ? "active" : ""}`}
                   onClick={() => setStatsWindowDays(days)}
                 >
                   {days}d
@@ -859,19 +980,19 @@ function App() {
 
           <div className="chartWrap" data-tour="stats-chart">
             <svg viewBox={`0 0 ${chartData.width} ${chartData.height}`} className="historyChart" role="img">
-              <line x1="34" y1="220" x2="646" y2="220" stroke="#cbd5e1" strokeWidth="1" />
-              <line x1="34" y1="20" x2="34" y2="220" stroke="#cbd5e1" strokeWidth="1" />
-              <line x1="34" y1="120" x2="646" y2="120" stroke="#e2e8f0" strokeDasharray="4 4" />
+              <line x1="34" y1="220" x2="646" y2="220" stroke={chartAxisColor} strokeWidth="1" />
+              <line x1="34" y1="20" x2="34" y2="220" stroke={chartAxisColor} strokeWidth="1" />
+              <line x1="34" y1="120" x2="646" y2="120" stroke={chartGridColor} strokeDasharray="4 4" />
 
               <polyline
                 fill="none"
-                stroke="#0ea5e9"
+                stroke={chartTotalColor}
                 strokeWidth="3"
                 points={chartData.points.map((point) => `${point.x},${point.yTotal}`).join(" ")}
               />
               <polyline
                 fill="none"
-                stroke="#6366f1"
+                stroke={chartCreditedColor}
                 strokeWidth="3"
                 points={chartData.points.map((point) => `${point.x},${point.yCredited}`).join(" ")}
               />
@@ -882,14 +1003,14 @@ function App() {
                     cx={point.x}
                     cy={point.yTotal}
                     r={hoveredHistoryDay === point.day ? 5 : 3.5}
-                    fill="#0284c7"
+                    fill={chartTotalColor}
                     onMouseEnter={() => setHoveredHistoryDay(point.day)}
                   />
                   <circle
                     cx={point.x}
                     cy={point.yCredited}
                     r={hoveredHistoryDay === point.day ? 5 : 3.5}
-                    fill="#4338ca"
+                    fill={chartCreditedColor}
                     onMouseEnter={() => setHoveredHistoryDay(point.day)}
                   />
                 </g>
@@ -952,11 +1073,29 @@ function App() {
               </div>
             ))}
           </div>
-        </section>
-      )}
+          </section>
+        )}
 
-      {activeTab === "settings" && (
-        <>
+        {activeTab === "settings" && (
+          <>
+          <section className="card">
+            <h3>Appearance</h3>
+            <div className="settingsGrid">
+              <div className="settingsField">
+                <label className="muted" htmlFor="theme-mode-select">Theme</label>
+                <select
+                  id="theme-mode-select"
+                  value={themeMode}
+                  onChange={(event) => setThemeMode(event.target.value as ThemeMode)}
+                >
+                  <option value="system">Auto (system)</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
           <section className="card" data-tour="settings-core">
             <h3>Hydration settings</h3>
             <div className="settingsGrid">
@@ -1148,7 +1287,7 @@ function App() {
                       <button className="primary" onClick={() => saveFluid(fluid)}>
                         Save
                       </button>
-                      <button onClick={() => removeFluid(fluid.id)}>Delete</button>
+                      <button className="danger" onClick={() => removeFluid(fluid.id)}>Delete</button>
                     </div>
                   </div>
                   <details className="fluidAdvancedDetails">
@@ -1241,8 +1380,13 @@ function App() {
           </section>
 
           <section className="card">
-            <h3>Cup presets</h3>
-            <div className="row">
+            <div className="sectionHeaderRow">
+              <h3>Cup presets</h3>
+              <button className="primary cupAddButton" onClick={createCup}>
+                Add cup
+              </button>
+            </div>
+            <div className="row cupPresetInputs">
               <input
                 placeholder="Preset name"
                 value={newCupName}
@@ -1253,9 +1397,6 @@ function App() {
                 value={newCupVolume}
                 onChange={(event) => setNewCupVolume(Number(event.target.value))}
               />
-              <button className="primary" onClick={createCup}>
-                Add cup
-              </button>
             </div>
             <div className="list">
               {cups.map((cup) => (
@@ -1263,7 +1404,7 @@ function App() {
                   <span>
                     {cup.name} <span className="muted">({cup.volume_ml}ml)</span>
                   </span>
-                  <button onClick={() => removeCup(cup.id)}>Delete</button>
+                  <button className="danger" onClick={() => removeCup(cup.id)}>Delete</button>
                 </div>
               ))}
             </div>
@@ -1271,10 +1412,13 @@ function App() {
 
           <section className="card">
             <h3>Help</h3>
-            <button data-tour="settings-retake-tour" onClick={startTour}>Take app tour again</button>
+            <button className="tourRetakeButton" data-tour="settings-retake-tour" onClick={startTour}>
+              Take app tour again
+            </button>
           </section>
-        </>
-      )}
+          </>
+        )}
+      </div>
 
       <div className="toastContainer" aria-live="polite" aria-atomic="true">
         {toasts.map((toast) => (
@@ -1308,27 +1452,57 @@ function App() {
         </div>
       )}
 
-      <nav className="bottomNav" aria-label="Primary">
+      <nav className="bottomNav" aria-label="Primary" ref={navRef}>
+        {navLiquidStyle && (
+          <span
+            className={`navLiquid ${navIsFlowing ? "moving" : ""}`}
+            style={{ left: `${navLiquidStyle.left}px`, width: `${navLiquidStyle.width}px` }}
+          />
+        )}
         <button
           data-tour="tab-today"
-          className={activeTab === "today" ? "active" : ""}
+          className={`bottomNavButton ${activeTab === "today" ? "is-selected" : ""}`}
+          ref={(element) => {
+            navTabRefs.current.today = element;
+          }}
           onClick={() => setActiveTab("today")}
         >
-          Today
+          <span className="navIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 3L4 8v11h16V8l-8-5Zm0 2.2 6 3.7V17h-3.5v-5h-5v5H6V8.9l6-3.7Z" />
+            </svg>
+          </span>
+          <span className="navLabel">Today</span>
         </button>
         <button
           data-tour="tab-stats"
-          className={activeTab === "stats" ? "active" : ""}
+          className={`bottomNavButton ${activeTab === "stats" ? "is-selected" : ""}`}
+          ref={(element) => {
+            navTabRefs.current.stats = element;
+          }}
           onClick={() => setActiveTab("stats")}
         >
-          Stats
+          <span className="navIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M5 18h14v2H3V4h2v14Zm3-2V9h3v7H8Zm5 0V6h3v10h-3Zm5 0v-4h3v4h-3Z" />
+            </svg>
+          </span>
+          <span className="navLabel">Stats</span>
         </button>
         <button
           data-tour="tab-settings"
-          className={activeTab === "settings" ? "active" : ""}
+          className={`bottomNavButton ${activeTab === "settings" ? "is-selected" : ""}`}
+          ref={(element) => {
+            navTabRefs.current.settings = element;
+          }}
           onClick={() => setActiveTab("settings")}
         >
-          Settings
+          <span className="navIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4.8a7.6 7.6 0 0 0-1.7-1l-.3-2.6h-4l-.3 2.6c-.6.2-1.2.6-1.7 1l-2.4-.8-2 3.4 2 1.6a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-.8c.5.4 1.1.7 1.7 1l.3 2.6h4l.3-2.6c.6-.2 1.2-.6 1.7-1l2.4.8 2-3.4-2-1.6ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z" />
+            </svg>
+          </span>
+          <span className="navLabel">Settings</span>
         </button>
       </nav>
     </main>
